@@ -44,12 +44,13 @@ python -m venv .venv
 
 # 3) Gereksinimler
 pip install -r requirements.txt
-```
 
+# 4) Çalıştır
+python SCAN.py
+
+```
 
 🛡️ Sorumluluk Reddi
 
 Bu yazılım winget üzerinden üçüncü parti yazılımlarda değişiklik yapar (yükleme/kaldırma/güncelleme).
 Yapılan işlemler kullanıcı sorumluluğundadır. Üretim ortamında kullanmadan önce test ediniz.
-# 4) Çalıştır
-python SCAN.py
