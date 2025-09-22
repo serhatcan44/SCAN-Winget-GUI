@@ -1,0 +1,65 @@
+{
+    "Türkçe": {
+        "install": "Yükle",
+        "uninstall": "Kaldır",
+        "update": "Güncelle",
+        "scan": "Yüklü Uygulamaları Tara",
+        "status": "Durum",
+        "installed_apps": "Yüklü Uygulamalar",
+        "not_installed_apps": "Yüklü Olmayan Uygulamalar"
+    },
+    "English": {
+        "install": "Install",
+        "uninstall": "Uninstall",
+        "update": "Update",
+        "scan": "Scan Installed Applications",
+        "status": "Status",
+        "installed_apps": "Installed Applications",
+        "not_installed_apps": "Not Installed Applications"
+    },
+    "Русский": {
+        "install": "Установить",
+        "uninstall": "Удалить",
+        "update": "Обновить",
+        "scan": "Сканировать установленные приложения",
+        "status": "Статус",
+        "installed_apps": "Установленные приложения",
+        "not_installed_apps": "Неустановленные приложения"
+    },
+    "Deutsch": {
+        "install": "Installieren",
+        "uninstall": "Deinstallieren",
+        "update": "Aktualisieren",
+        "scan": "Installierte Anwendungen scannen",
+        "status": "Status",
+        "installed_apps": "Installierte Anwendungen",
+        "not_installed_apps": "Nicht installierte Anwendungen"
+    },
+    "中文": {
+        "install": "安装",
+        "uninstall": "卸载",
+        "update": "更新",
+        "scan": "扫描已安装的应用程序",
+        "status": "状态",
+        "installed_apps": "已安装的应用程序",
+        "not_installed_apps": "未安装的应用程序"
+    },
+    "Español": {
+        "install": "Instalar",
+        "uninstall": "Desinstalar",
+        "update": "Actualizar",
+        "scan": "Escanear aplicaciones instaladas",
+        "status": "Estado",
+        "installed_apps": "Aplicaciones instaladas",
+        "not_installed_apps": "Aplicaciones no instaladas"
+    },
+    "العربية": {
+        "install": "تثبيت",
+        "uninstall": "إلغاء التثبيت",
+        "update": "تحديث",
+        "scan": "فحص التطبيقات المثبتة",
+        "status": "الحالة",
+        "installed_apps": "التطبيقات المثبتة",
+        "not_installed_apps": "التطبيقات غير المثبتة"
+    }
+}
