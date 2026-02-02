@@ -8,7 +8,7 @@ import json
 from customtkinter import CTkImage  # CTkImage'i import edin
 import random
 from concurrent.futures import ThreadPoolExecutor
-import lottiWiev 
+
 
 # Tkinter ayarları
 ctk.set_appearance_mode("dark")
