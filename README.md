@@ -14,7 +14,7 @@ Yüklü/yüklü olmayan uygulamaları ikonlarla gösterir; seçtiğiniz uygulama
 - 🔍 **Yüklü / Yüklü olmayan** uygulamaları listeleme (winget)
 - ⬇️ **Yükle**, 🗑️ **Kaldır**, 🔄 **Güncelle** (seçili uygulama)
 - 📦 Uygulama ikonlarıyla modern grid yerleşimi
-- 💾 **Kişisel ayarlar** (tema/dil) `C:\scanapp\settings.json`’da saklanır
+- 💾 **Kişisel ayarlar** (tema/dil) kullanıcı profilindeki uygulama klasöründe saklanır
 - 🔗 GitHub kısayolu
 
 > Çoklu dil metinleri `languages.json` içinde, ayarlar `settings.json` ile yüklenip kaydedilir. Uygulama arayüzü CustomTkinter + Pillow ile çizilir ve winget komutları üzerinden çalışır.  
