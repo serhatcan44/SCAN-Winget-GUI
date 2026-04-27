@@ -17,6 +17,7 @@ LOCALAPPDATA_DIR = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
 SETTINGS_DIR = os.path.join(LOCALAPPDATA_DIR, APP_NAME)
 SETTINGS_PATH = os.path.join(SETTINGS_DIR, "settings.json")
 HISTORY_PATH = os.path.join(SETTINGS_DIR, "history.json")
+DEFAULT_LANGUAGE = "Türkçe"
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,6 @@ def load_json_file(path: str, default_value: Any) -> Any:
         return default_value
     except json.JSONDecodeError as e:
         logger.error(f"JSON decode hatası {path}: {e}")
-        # Backup'a başvur veya varsayılan döndür
         backup_path = path + ".backup"
         if os.path.exists(backup_path):
             try:
@@ -62,7 +62,6 @@ def load_json_file(path: str, default_value: Any) -> Any:
 
 def save_json_file(path: str, payload: Any) -> None:
     ensure_app_storage()
-    # Backup al
     if os.path.exists(path):
         backup_path = path + ".backup"
         try:
@@ -83,10 +82,10 @@ def load_settings() -> Settings:
     ensure_app_storage()
     if os.path.exists(SETTINGS_PATH):
         settings = load_json_file(SETTINGS_PATH, {})
-        settings.setdefault("language", "Türkçe")
+        settings.setdefault("language", DEFAULT_LANGUAGE)
         settings.setdefault("Theme", "Dark")
         return settings
-    return {"language": "Türkçe", "Theme": "Dark"}
+    return {"language": DEFAULT_LANGUAGE, "Theme": "Dark"}
 
 
 def save_settings(settings: Settings) -> None:

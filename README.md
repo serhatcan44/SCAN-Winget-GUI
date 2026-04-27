@@ -1,56 +1,43 @@
-# SCAN – Winget GUI (CustomTkinter)
+# SCAN - Winget GUI (CustomTkinter)
 
 Windows için çok dilli, tema destekli, **winget** tabanlı uygulama tarayıcı ve yönetici.  
-Yüklü/yüklü olmayan uygulamaları ikonlarla gösterir; seçtiğiniz uygulamayı **Yükle / Kaldır / Güncelle** komutlarıyla tek tıkla yönetir.
+Yüklü ve yüklü olmayan uygulamaları ikonlarla gösterir; seçtiğiniz uygulamayı **Yükle / Kaldır / Güncelle** komutlarıyla tek tıkla yönetir.
 
 ![Screenshot](docs/screenshot.png)
 
----
+## Özellikler
 
-## ✨ Özellikler
+- Koyu/Açık tema desteği
+- Çok dilli arayüz: Türkçe, English, Русский, Deutsch, 中文, Español, العربية
+- Yüklü ve yüklü olmayan uygulamaları listeleme
+- Seçili uygulama için yükleme, kaldırma ve güncelleme
+- İkonlarla modern grid yerleşimi
+- Kullanıcı profiline kaydedilen kişisel ayarlar
+- GitHub kısayolu
 
-- 🌓 **Koyu/Açık Tema** (CustomTkinter)
-- 🌐 **Çok dilli arayüz**: Türkçe, English, Русский, Deutsch, 中文, Español, العربية  
-- 🔍 **Yüklü / Yüklü olmayan** uygulamaları listeleme (winget)
-- ⬇️ **Yükle**, 🗑️ **Kaldır**, 🔄 **Güncelle** (seçili uygulama)
-- 📦 Uygulama ikonlarıyla modern grid yerleşimi
-- 💾 **Kişisel ayarlar** (tema/dil) kullanıcı profilindeki uygulama klasöründe saklanır
-- 🔗 GitHub kısayolu
+> Çoklu dil metinleri `languages.json` içinde, ayarlar ise kullanıcı profilindeki uygulama klasöründe saklanır.
 
-> Çoklu dil metinleri `languages.json` içinde, ayarlar `settings.json` ile yüklenip kaydedilir. Uygulama arayüzü CustomTkinter + Pillow ile çizilir ve winget komutları üzerinden çalışır.  
-> (Detay: kod akışı `SCAN.py` içinde; dil metinleri `languages.json`; varsayılan ayarlar `settings.json`.) 
+## Desteklenen Platform
 
----
+- Windows 10/11
+- `winget` kurulu sistem
 
-## 📦 Desteklenen Platform
-
-- **Windows 10/11** + **winget** kurulu
-
----
-
-## ⚙️ Kurulum (Geliştirici)
+## Kurulum
 
 ```bash
-# 1) Depoyu klonla
 git clone https://github.com/<kullanici-adin>/SCAN.git
 cd SCAN
 
-# 2) Sanal ortam (önerilir)
 python -m venv .venv
-# Windows PowerShell:
+
+# PowerShell
 .venv\Scripts\Activate.ps1
-# veya CMD:
-.venv\Scripts\activate.bat
 
-# 3) Gereksinimler
 pip install -r requirements.txt
-
-# 4) Çalıştır
 python SCAN.py
-
 ```
 
-🛡️ Sorumluluk Reddi
+## Sorumluluk Reddi
 
-Bu yazılım winget üzerinden üçüncü parti yazılımlarda değişiklik yapar (yükleme/kaldırma/güncelleme).
-Yapılan işlemler kullanıcı sorumluluğundadır. Üretim ortamında kullanmadan önce test ediniz.
+Bu yazılım `winget` üzerinden üçüncü parti yazılımlarda değişiklik yapar.
+Yapılan işlemler kullanıcı sorumluluğundadır; üretim ortamında kullanmadan önce test edilmelidir.

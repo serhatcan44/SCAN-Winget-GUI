@@ -8,6 +8,7 @@ LanguageTexts = dict[str, str]
 
 
 LANGUAGE_FILE = os.path.join(os.path.dirname(__file__), "languages.json")
+DEFAULT_LANGUAGE = "Türkçe"
 
 
 def load_language(language: str) -> LanguageTexts:
@@ -15,7 +16,7 @@ def load_language(language: str) -> LanguageTexts:
         raise FileNotFoundError(f"languages.json dosyası bulunamadı: {LANGUAGE_FILE}")
     with open(LANGUAGE_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
-    return data.get(language, data.get("Türkçe", {}))
+    return data.get(language, data.get(DEFAULT_LANGUAGE, {}))
 
 
 def get_theme_values(language: str) -> list[str]:

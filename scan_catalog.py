@@ -26,6 +26,7 @@ APPS: dict[str, AppEntry] = {
     "Steam": {"id": "Valve.Steam", "logo": "steam.png"},
     "EverNote": {"id": "evernote.evernote", "logo": "evernote.png"},
     "Teamviewer": {"id": "teamviewer.teamviewer", "logo": "teamviewer.png"},
+    "Internet Download Manager": {"id": "Tonec.InternetDownloadManager", "logo": "idm.png"},
 }
 
 
@@ -37,4 +38,10 @@ APP_ALIASES: dict[str, list[str]] = {
     "WhatsApp": ["whatsapp", "whatsappdesktop", "5319275a.whatsappdesktop"],
     "Visual Studio Code": ["visual studio code", "vscode"],
     "Teamviewer": ["teamviewer", "team viewer"],
+    "Internet Download Manager": [
+        "internet download manager",
+        "idm",
+        "idman",
+        "tonec.internetdownloadmanager",
+    ],
 }

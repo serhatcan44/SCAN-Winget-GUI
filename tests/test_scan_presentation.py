@@ -21,6 +21,10 @@ class ScanPresentationTests(unittest.TestCase):
         self.assertEqual(texts["install_button"], "Install")
         self.assertEqual(texts["installed_label"], "Installed Apps")
 
+    def test_get_ui_texts_includes_helper_tool_button(self):
+        texts = get_ui_texts({"helper_tool": "Helper Tool"})
+        self.assertEqual(texts["helper_tool_button"], "Helper Tool")
+
     def test_apply_theme_menu_language_selects_dark_value(self):
         menu = FakeThemeMenu()
         apply_theme_menu_language(menu, "English", "Dark")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import time
@@ -125,6 +126,7 @@ def get_winget_package_details(app_id: str, subprocess_module: Any = None, shuti
             stderr=process_api.PIPE,
             text=True,
             creationflags=process_api.CREATE_NO_WINDOW,
+            errors="replace",
         )
     except Exception:
         return {}
@@ -156,13 +158,12 @@ def has_available_upgrade(
     subprocess_module: Any = None,
     shutil_module: Any = None,
 ) -> tuple[bool, str]:
-    # Mevcut versiyonu winget show ile sorgula (upgrade başlatmaz)
     process_api = subprocess_module or subprocess
     shell_api = shutil_module or shutil
     winget_path = shell_api.which("winget")
     if winget_path is None:
         return False, "winget_missing"
-    
+
     try:
         result = process_api.run(
             [winget_path, "show", "--id", app_id, "--exact", "--accept-source-agreements"],
@@ -176,58 +177,58 @@ def has_available_upgrade(
         return False, "unknown"
 
     output_text = result.stdout or ""
-    
-    # Kurulu ve mevcut versiyonları çıkart
     installed_version = ""
     available_version = ""
     in_installed_section = False
-    
+
     for line in output_text.splitlines():
         clean_line = line.strip()
         if not clean_line:
             continue
-            
-        # Kurulu sürüm bölümünü belirle
-        if "installed version" in clean_line.lower() or "kurulu sürüm" in clean_line.lower() or "kurulu surum" in clean_line.lower():
+
+        lowered_line = clean_line.lower()
+        if "installed version" in lowered_line or "kurulu sürüm" in lowered_line or "kurulu surum" in lowered_line:
             in_installed_section = True
             if ":" in clean_line:
                 _, version = clean_line.split(":", 1)
                 installed_version = version.strip()
             continue
-            
-        # Available version bölümünü belirle
-        if "available version" in clean_line.lower() or "mevcut sürüm" in clean_line.lower() or "mevcut surum" in clean_line.lower():
+
+        if "available version" in lowered_line or "mevcut sürüm" in lowered_line or "mevcut surum" in lowered_line:
             if ":" in clean_line:
                 _, version = clean_line.split(":", 1)
                 available_version = version.strip()
             continue
-        
-        # Basit version ayrıştırması
+
         if ":" not in clean_line:
             continue
-            
+
         key, value = [part.strip() for part in clean_line.split(":", 1)]
         key_lower = key.lower()
-        
+
         if in_installed_section and key_lower in {"version", "sürüm", "surum"}:
             installed_version = value
             in_installed_section = False
         elif key_lower in {"version", "sürüm", "surum"} and not available_version:
             available_version = value
-    
-    # Güncellemesi olmadığını belirten çıktıları kontrol et
+
     output_lower = output_text.lower()
-    if any(token in output_lower for token in ["no available upgrade found", "no newer package versions are available", "güncelleme bulunamadı", "daha yeni sürüm bulunamadı", "yükseltme bulunamadı"]):
+    no_upgrade_tokens = [
+        "no available upgrade found",
+        "no newer package versions are available",
+        "güncelleme bulunamadı",
+        "daha yeni sürüm bulunamadı",
+        "yükseltme bulunamadı",
+    ]
+    if any(token in output_lower for token in no_upgrade_tokens):
         return False, "up_to_date"
-    
-    # Eğer mevcut versiyon bilgisi yoksa
+
     if not available_version and not installed_version:
         return False, "unknown"
-    
-    # Versiyonları karşılaştır (basit string karşılaştırması)
+
     if available_version and installed_version and available_version != installed_version:
         return True, "available"
-    
+
     return False, "up_to_date"
 
 
@@ -404,3 +405,86 @@ def is_app_installed(
         )
     ).lower()
     return contains_any_alias(registry_blob, aliases)
+
+
+def run_helper_executable(
+    exe_name: str,
+    base_dir: str | None = None,
+    subprocess_module: Any = None,
+    os_module: Any = None,
+    shell_execute_runner: Any = None,
+) -> tuple[int, str]:
+    process_api = subprocess_module or subprocess
+    os_api = os_module or os
+    helper_base_dir = base_dir or os_api.path.dirname(__file__)
+    helper_exe_path = os_api.path.join(helper_base_dir, exe_name)
+    if not os_api.path.exists(helper_exe_path):
+        raise FileNotFoundError(helper_exe_path)
+
+    try:
+        result = process_api.run(
+            [helper_exe_path],
+            stdout=process_api.PIPE,
+            stderr=process_api.PIPE,
+            text=True,
+            creationflags=getattr(process_api, "CREATE_NO_WINDOW", 0),
+            errors="replace",
+        )
+    except OSError as exc:
+        if getattr(exc, "winerror", None) != 740:
+            raise
+        elevated_runner = shell_execute_runner or _run_helper_executable_elevated
+        return elevated_runner(helper_exe_path)
+
+    output_text = "\n".join(part for part in [result.stdout, result.stderr] if part).strip()
+    return result.returncode, output_text
+
+
+def _run_helper_executable_elevated(helper_exe_path: str) -> tuple[int, str]:
+    import ctypes
+
+    SEE_MASK_NOCLOSEPROCESS = 0x00000040
+    INFINITE = 0xFFFFFFFF
+    SW_SHOWDEFAULT = 10
+
+    class SHELLEXECUTEINFOW(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", ctypes.c_ulong),
+            ("fMask", ctypes.c_ulong),
+            ("hwnd", ctypes.c_void_p),
+            ("lpVerb", ctypes.c_wchar_p),
+            ("lpFile", ctypes.c_wchar_p),
+            ("lpParameters", ctypes.c_wchar_p),
+            ("lpDirectory", ctypes.c_wchar_p),
+            ("nShow", ctypes.c_int),
+            ("hInstApp", ctypes.c_void_p),
+            ("lpIDList", ctypes.c_void_p),
+            ("lpClass", ctypes.c_wchar_p),
+            ("hkeyClass", ctypes.c_void_p),
+            ("dwHotKey", ctypes.c_ulong),
+            ("hIcon", ctypes.c_void_p),
+            ("hProcess", ctypes.c_void_p),
+        ]
+
+    execute_info = SHELLEXECUTEINFOW()
+    execute_info.cbSize = ctypes.sizeof(SHELLEXECUTEINFOW)
+    execute_info.fMask = SEE_MASK_NOCLOSEPROCESS
+    execute_info.hwnd = None
+    execute_info.lpVerb = "runas"
+    execute_info.lpFile = helper_exe_path
+    execute_info.lpParameters = None
+    execute_info.lpDirectory = os.path.dirname(helper_exe_path) or None
+    execute_info.nShow = SW_SHOWDEFAULT
+
+    if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(execute_info)):
+        raise ctypes.WinError()
+
+    try:
+        ctypes.windll.kernel32.WaitForSingleObject(execute_info.hProcess, INFINITE)
+        exit_code = ctypes.c_ulong()
+        if not ctypes.windll.kernel32.GetExitCodeProcess(execute_info.hProcess, ctypes.byref(exit_code)):
+            raise ctypes.WinError()
+        return exit_code.value, "Yükseltilmiş izin ile çalıştırıldı."
+    finally:
+        if execute_info.hProcess:
+            ctypes.windll.kernel32.CloseHandle(execute_info.hProcess)

@@ -1,38 +1,42 @@
 from __future__ import annotations
 
-import re
-from scan_operation_logic import CANCEL_TOKENS, NOT_INSTALLED_TOKENS, NO_UPGRADE_TOKENS
 from scan_matchers import output_contains_any
+from scan_operation_logic import CANCEL_TOKENS, NOT_INSTALLED_TOKENS, NO_UPGRADE_TOKENS
 
 
 Feedback = dict[str, str | int | bool | None]
 
 
 def extract_error_message(output_text: str) -> str:
-    """Winget çıktısından hata mesajını çıkart"""
+    """Winget veya yardımcı araç çıktısından kısa hata özetini üret."""
     if not output_text:
         return "Detay bulunamadı"
-    
-    lines = output_text.strip().split('\n')
-    
-    # Hata mesajlarını ara (başında hata göstergeleri olan satırlar)
+
+    lines = output_text.strip().split("\n")
     error_indicators = [
-        "error:", "failed:", "unable to", "permission denied", "not found",
-        "hata:", "başarısız:", "erişim reddedildi", "bulunamadı", "eksik:"
+        "error:",
+        "failed:",
+        "unable to",
+        "permission denied",
+        "not found",
+        "hata:",
+        "başarısız:",
+        "erişim reddedildi",
+        "bulunamadı",
+        "eksik:",
     ]
-    
+
     for line in lines:
         clean = line.strip().lower()
         for indicator in error_indicators:
             if indicator in clean and len(line.strip()) > 5:
-                return line.strip()[:150]  # İlk 150 karakter
-    
-    # Hata göstergesi yoksa son anlamlı satırları döndür
+                return line.strip()[:150]
+
     for line in reversed(lines):
         clean = line.strip()
-        if clean and len(clean) > 5 and not clean.startswith('%'):
+        if clean and len(clean) > 5 and not clean.startswith("%"):
             return clean[:150]
-    
+
     return "Detay bulunamadı"
 
 
@@ -241,6 +245,35 @@ def update_result(
         "hint": f"Güncelleme komutu hata kodu ile sonlandı: {return_code}",
         "history_status": "error",
         "history_detail": f"Güncelleme başarısız. Sebep: {extract_error_message(output_text)}",
+    }
+
+
+def helper_missing_feedback(exe_name: str = "idm.exe") -> Feedback:
+    return {
+        "title": "Yardımcı araç bulunamadı",
+        "detail": f"{exe_name} dosyası proje klasöründe bulunamadı.",
+        "hint": "Dosyayı SCAN.py ile aynı klasöre ekleyin.",
+        "history_status": "error",
+        "history_detail": f"{exe_name} proje klasöründe bulunamadığı için yardımcı araç başlatılamadı.",
+    }
+
+
+def helper_result(return_code: int, output_text: str) -> Feedback:
+    if return_code == 0:
+        return {
+            "title": "Yardımcı araç tamamlandı",
+            "detail": "Yardımcı araç başarıyla çalıştırıldı.",
+            "hint": "Yardımcı araç işlemi sorunsuz tamamlandı.",
+            "history_status": "success",
+            "history_detail": "Yardımcı araç başarıyla çalıştırıldı.",
+        }
+    error_detail = extract_error_message(output_text)
+    return {
+        "title": "Yardımcı araç başarısız",
+        "detail": "Yardımcı araç çalıştırılırken bir hata oluştu.",
+        "hint": f"Yardımcı araç hata kodu ile sonlandı: {return_code}",
+        "history_status": "error",
+        "history_detail": f"Yardımcı araç başarısız. Sebep: {error_detail}",
     }
 
 

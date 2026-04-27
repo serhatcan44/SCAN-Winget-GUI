@@ -1,6 +1,6 @@
-﻿
-import os
+﻿import os
 import re
+import sys
 import shutil
 import subprocess
 import threading
@@ -18,6 +18,8 @@ from scan_controllers import (
     bulk_final_status,
     bulk_item_result,
     bulk_precheck,
+    helper_missing_feedback,
+    helper_result,
     manage_precheck,
     manage_result,
     update_precheck,
@@ -46,6 +48,7 @@ from scan_services import (
     has_available_upgrade as service_has_available_upgrade,
     is_app_installed as service_is_app_installed,
     is_app_installed_via_winget as service_is_app_installed_via_winget,
+    run_helper_executable as service_run_helper_executable,
 )
 from scan_ui_presenter import (
     apply_operation_feedback as presenter_apply_operation_feedback,
@@ -55,11 +58,13 @@ from scan_ui_presenter import (
 )
 
 # Configure logging
+log_dir = os.path.join(os.environ["LOCALAPPDATA"], "SCAN")
+os.makedirs(log_dir, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(os.path.join(os.path.dirname(__file__), 'scan.log')),
+        logging.FileHandler(os.path.join(log_dir, 'scan.log')),
         logging.StreamHandler()
     ]
 )
@@ -72,6 +77,12 @@ except ImportError:
     winreg = None
     logger.warning("winreg modülü yüklenemedi, registry işlemleri devre dışı.")
 
+def resource_path(relative_path: str) -> str:
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -97,28 +108,32 @@ def get_theme_colors(theme_name=None):
             "border_strong": "#b7c6db",
             "text": "#152033",
             "muted": "#5c6b80",
-            "accent": "#2563eb",
-            "accent_hover": "#1d4ed8",
-            "accent_soft": "#dbeafe",
+            "accent": "#005cff",
+            "accent_hover": "#0047c7",
+            "accent_soft": "#d6e4ff",
             "accent_text": "#f8fbff",
-            "success": "#1f8a4c",
-            "success_hover": "#18733f",
-            "success_soft": "#dcfce7",
-            "danger": "#d14343",
-            "danger_hover": "#b93535",
-            "danger_soft": "#fee2e2",
+            "success": "#00c853",
+            "success_hover": "#00a844",
+            "success_soft": "#d9ffe8",
+            "danger": "#ff1744",
+            "danger_hover": "#d5002f",
+            "danger_soft": "#ffdce4",
             "button_text": "#ffffff",
             "input_button": "#d9e4f2",
             "input_button_hover": "#cad8ea",
             "overlay": "#d8e2f0",
-            "selected_tile": "#dbeafe",
-            "selected_tile_text": "#133772",
-            "badge_installed_bg": "#dbeafe",
-            "badge_installed_text": "#1d4ed8",
-            "badge_ready_bg": "#dcfce7",
-            "badge_ready_text": "#1f8a4c",
-            "progress_badge_bg": "#dbeafe",
-            "progress_badge_text": "#1d4ed8",
+            "selected_tile": "#d6e4ff",
+            "selected_tile_text": "#00318a",
+            "badge_installed_bg": "#d6e4ff",
+            "badge_installed_text": "#005cff",
+            "badge_ready_bg": "#d9ffe8",
+            "badge_ready_text": "#00a844",
+            "progress_badge_bg": "#d6e4ff",
+            "progress_badge_text": "#005cff",
+            "signature_text": "#005cff",
+            "button_disabled_bg": "#e7edf5",
+            "button_disabled_border": "#c7d3e3",
+            "button_disabled_text": "#7f8da3",
         }
     return {
         "bg": "#0b1220",
@@ -130,28 +145,32 @@ def get_theme_colors(theme_name=None):
         "border_strong": "#3a4c6a",
         "text": "#e8eef8",
         "muted": "#97a6ba",
-        "accent": "#4f8cff",
-        "accent_hover": "#3b78ec",
-        "accent_soft": "#1f3c68",
+        "accent": "#1e90ff",
+        "accent_hover": "#0078ff",
+        "accent_soft": "#17385b",
         "accent_text": "#f4f8ff",
-        "success": "#2ba36a",
-        "success_hover": "#23905d",
-        "success_soft": "#173a2b",
-        "danger": "#e05d5d",
-        "danger_hover": "#c94c4c",
-        "danger_soft": "#482127",
+        "success": "#00e676",
+        "success_hover": "#00c853",
+        "success_soft": "#173f2c",
+        "danger": "#ff1744",
+        "danger_hover": "#ff0033",
+        "danger_soft": "#4b1f2a",
         "button_text": "#f4f8ff",
         "input_button": "#24344f",
         "input_button_hover": "#2b3f61",
         "overlay": "#0b1220",
-        "selected_tile": "#203252",
+        "selected_tile": "#1b3d6d",
         "selected_tile_text": "#f3f8ff",
-        "badge_installed_bg": "#19345c",
-        "badge_installed_text": "#7cb0ff",
-        "badge_ready_bg": "#173a2b",
-        "badge_ready_text": "#57d39a",
-        "progress_badge_bg": "#19345c",
-        "progress_badge_text": "#7cb0ff",
+        "badge_installed_bg": "#17385b",
+        "badge_installed_text": "#5eb3ff",
+        "badge_ready_bg": "#173f2c",
+        "badge_ready_text": "#4dff9a",
+        "progress_badge_bg": "#17385b",
+        "progress_badge_text": "#5eb3ff",
+        "signature_text": "#5eb3ff",
+        "button_disabled_bg": "#253246",
+        "button_disabled_border": "#34455d",
+        "button_disabled_text": "#7f92aa",
     }
 
 
@@ -159,17 +178,21 @@ THEME = get_theme_colors()
 panel_canvases = []
 panel_sections = []
 
-WINDOW_WIDTH = 960
-WINDOW_HEIGHT = 760
+DEFAULT_WINDOW_WIDTH = 960
+DEFAULT_WINDOW_HEIGHT = 760
+MIN_WINDOW_WIDTH = 860
+MIN_WINDOW_HEIGHT = 620
+WINDOW_MARGIN_X = 80
+WINDOW_MARGIN_Y = 120
+GITHUB_URL = "https://github.com/serhatcan44"
+LINKEDIN_URL = "http://linkedin.com/in/serhat-can"
+INSTAGRAM_URL = "https://instagram.com/_canserhat44"
 
 app = ctk.CTk(fg_color=THEME["bg"])
-app.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
 app.title("SCAN")
-app.resizable(False, False)
-app.minsize(WINDOW_WIDTH, WINDOW_HEIGHT)
-app.maxsize(WINDOW_WIDTH, WINDOW_HEIGHT)
+app.resizable(True, True)
 
-icon_path = os.path.join(os.path.dirname(__file__), "app_icon.ico")
+icon_path = resource_path("app_icon.ico")
 try:
     if os.path.exists(icon_path):
         app.iconbitmap(icon_path)
@@ -183,9 +206,17 @@ operation_lock = threading.Lock()
 scan_cache = {"timestamp": 0.0, "installed": set()}
 registry_cache = {"timestamp": 0.0, "names": []}
 operation_state = {"busy": False, "action": None}
-search_state = {"query": "", "status": "all"}
+search_state = {"query": ""}
+selected_action_state = {"install": "disabled", "uninstall": "disabled", "update": "disabled"}
+helper_button_state = {"visible": False, "enabled": False}
+activate_idm_button_state = {"visible": False, "enabled": False}
 history_items = []
 current_view = {"name": "operations"}
+IDM_APP_NAME = "Internet Download Manager"
+IDM_HELPER_BUTTON_TEXT = "IDM Etkinleştir"
+IDM_HISTORY_ACTION_NAME = "Etkinleştirme"
+settings_nav_state = {"active": "general"}
+history_filter_state = {"mode": "all"}
 SCAN_CACHE_TTL_SEC = 12
 REGISTRY_CACHE_TTL_SEC = 180
 MAX_HISTORY_ITEMS = 12
@@ -194,6 +225,31 @@ active_scroll_canvas = None
 app_tile_widgets = {}
 nav_items = {}
 history_items = load_history(MAX_HISTORY_ITEMS)
+responsive_state = {
+    "header_mode": None,
+    "actions_mode": None,
+    "panel_mode": None,
+    "settings_mode": None,
+}
+
+
+def configure_window_bounds():
+    screen_width = app.winfo_screenwidth()
+    screen_height = app.winfo_screenheight()
+    available_width = max(720, screen_width - WINDOW_MARGIN_X)
+    available_height = max(540, screen_height - WINDOW_MARGIN_Y)
+    window_width = min(DEFAULT_WINDOW_WIDTH, available_width)
+    window_height = min(DEFAULT_WINDOW_HEIGHT, available_height)
+    min_width = min(MIN_WINDOW_WIDTH, available_width)
+    min_height = min(MIN_WINDOW_HEIGHT, available_height)
+    pos_x = max((screen_width - window_width) // 2, 0)
+    pos_y = max((screen_height - window_height) // 2, 0)
+
+    app.geometry(f"{window_width}x{window_height}+{pos_x}+{pos_y}")
+    app.minsize(min_width, min_height)
+
+
+configure_window_bounds()
 
 
 def apply_theme_colors():
@@ -223,7 +279,9 @@ def apply_theme_colors():
             "dropdown_hover_color": THEME["surface_hover"],
             "text_color": THEME["text"],
         }),
-        ("github_button", {"fg_color": THEME["accent"], "hover_color": THEME["accent_hover"], "text_color": THEME["button_text"]}),
+        ("github_button", {"fg_color": "transparent", "hover_color": THEME["bg"], "border_color": THEME["bg"]}),
+        ("linkedin_button", {"fg_color": "transparent", "hover_color": THEME["bg"], "border_color": THEME["bg"]}),
+        ("instagram_button", {"fg_color": "transparent", "hover_color": THEME["bg"], "border_color": THEME["bg"]}),
         ("installed_frame", {"fg_color": THEME["surface"], "border_color": THEME["border"]}),
         ("not_installed_frame", {"fg_color": THEME["surface"], "border_color": THEME["border"]}),
         ("installed_label", {"text_color": THEME["text"]}),
@@ -233,11 +291,6 @@ def apply_theme_colors():
         ("control_title", {"text_color": THEME["text"]}),
         ("scan_button", {"fg_color": THEME["surface_soft"], "hover_color": THEME["surface_hover"], "text_color": THEME["text"]}),
         ("update_all_button", {"fg_color": THEME["accent"], "hover_color": THEME["accent_hover"], "text_color": THEME["button_text"]}),
-        ("search_card", {"fg_color": THEME["surface_alt"], "border_color": THEME["border"]}),
-        ("search_label", {"text_color": THEME["muted"]}),
-        ("search_entry", {"fg_color": THEME["surface"], "border_color": THEME["border"], "text_color": THEME["text"]}),
-        ("filter_panel", {"fg_color": THEME["surface_alt"], "border_color": THEME["border"]}),
-        ("filter_title", {"text_color": THEME["muted"]}),
         ("info_panel", {"fg_color": THEME["surface_alt"], "border_color": THEME["border"]}),
         ("info_title", {"text_color": THEME["muted"]}),
         ("selected_search_shell", {"fg_color": THEME["surface"], "border_color": THEME["border"]}),
@@ -264,11 +317,13 @@ def apply_theme_colors():
         ("actions_title", {"text_color": THEME["muted"]}),
         ("install_button", {"fg_color": THEME["success"], "hover_color": THEME["success_hover"], "text_color": THEME["button_text"]}),
         ("uninstall_button", {"fg_color": THEME["danger"], "hover_color": THEME["danger_hover"], "text_color": THEME["button_text"]}),
-        ("update_button", {"fg_color": THEME["surface_soft"], "hover_color": THEME["surface_hover"], "border_color": THEME["border_strong"], "text_color": THEME["text"]}),
+        ("update_button", {"fg_color": THEME["accent"], "hover_color": THEME["accent_hover"], "border_color": THEME["accent"], "text_color": THEME["button_text"]}),
+        ("helper_button", {"fg_color": THEME["surface_soft"], "hover_color": THEME["surface_hover"], "border_color": THEME["border_strong"], "text_color": THEME["text"]}),
         ("history_card", {"fg_color": THEME["surface"], "border_color": THEME["border"]}),
         ("history_title", {"text_color": THEME["text"]}),
         ("history_subtitle", {"text_color": THEME["muted"]}),
-        ("history_refresh_button", {"fg_color": THEME["surface_soft"], "hover_color": THEME["surface_hover"], "text_color": THEME["text"], "border_color": THEME["border"]}),
+        ("history_clear_button", {"fg_color": THEME["danger"], "hover_color": THEME["danger_hover"], "text_color": THEME["button_text"], "border_color": THEME["danger"]}),
+        ("history_refresh_button", {"fg_color": THEME["success"], "hover_color": THEME["success_hover"], "text_color": THEME["button_text"], "border_color": THEME["success"]}),
         ("history_stats_row", {"fg_color": "transparent"}),
         ("history_total_card", {"fg_color": THEME["surface_alt"], "border_color": THEME["border"]}),
         ("history_success_card", {"fg_color": THEME["surface_alt"], "border_color": THEME["border"]}),
@@ -284,9 +339,8 @@ def apply_theme_colors():
         ("history_feed_hint", {"text_color": THEME["muted"]}),
         ("history_list_frame", {"fg_color": "transparent"}),
         ("settings_card", {"fg_color": THEME["surface"], "border_color": THEME["border"]}),
-        ("settings_title", {"text_color": THEME["text"]}),
-        ("settings_subtitle", {"text_color": THEME["muted"]}),
-        ("appearance_card", {"fg_color": THEME["surface_alt"], "border_color": THEME["border"]}),
+        ("settings_sidebar", {"fg_color": THEME["surface_alt"], "border_color": THEME["border"]}),
+        ("settings_sidebar_title", {"text_color": THEME["muted"]}),
         ("appearance_title", {"text_color": THEME["text"]}),
         ("appearance_desc", {"text_color": THEME["muted"]}),
         ("theme_menu", {
@@ -297,10 +351,14 @@ def apply_theme_colors():
             "dropdown_hover_color": THEME["surface_hover"],
             "text_color": THEME["text"],
         }),
-        ("language_card", {"fg_color": THEME["surface_alt"], "border_color": THEME["border"]}),
         ("language_title", {"text_color": THEME["text"]}),
         ("language_desc", {"text_color": THEME["muted"]}),
-        ("settings_note", {"text_color": THEME["muted"]}),
+        ("activate_windows_button", {"fg_color": THEME["accent"], "hover_color": THEME["accent_hover"], "text_color": THEME["button_text"]}),
+        ("activate_windows_desc", {"text_color": THEME["muted"]}),
+        ("activate_office_button", {"fg_color": THEME["accent"], "hover_color": THEME["accent_hover"], "text_color": THEME["button_text"]}),
+        ("activate_office_desc", {"text_color": THEME["muted"]}),
+        ("activate_idm_button", {"fg_color": THEME["accent"], "hover_color": THEME["accent_hover"], "text_color": THEME["button_text"]}),
+        ("activate_idm_desc", {"text_color": THEME["muted"]}),
         ("progress_overlay", {"fg_color": THEME["overlay"]}),
         ("progress_card", {"fg_color": THEME["surface"], "border_color": THEME["border"]}),
         ("progress_badge", {"fg_color": THEME["progress_badge_bg"], "text_color": THEME["progress_badge_text"]}),
@@ -308,7 +366,6 @@ def apply_theme_colors():
         ("progress_detail_label", {"text_color": THEME["muted"]}),
         ("progress_modal_bar", {"progress_color": THEME["accent"], "fg_color": THEME["border"]}),
         ("progress_hint_label", {"text_color": THEME["muted"]}),
-        ("signature_label", {"text_color": THEME["muted"]}),
     ]
 
     for widget_name, options in widget_updates:
@@ -322,23 +379,32 @@ def apply_theme_colors():
         except Exception as e:
             logger.warning(f"Canvas güncellenemedi: {e}")
 
+    if "signature_canvas" in globals():
+        try:
+            signature_canvas.configure(bg=THEME["bg"], highlightbackground=THEME["bg"])
+            if "signature_text_item" in globals():
+                signature_canvas.itemconfigure(signature_text_item, fill=THEME["signature_text"])
+        except Exception as e:
+            logger.warning(f"İmza alanı güncellenemedi: {e}")
+
+    if "settings_nav_general" in globals():
+        update_settings_nav_styles()
+
     if "selected_search_icon" in globals():
         draw_search_icon(selected_search_icon)
 
     for section in panel_sections:
         section["panel"].configure(fg_color=THEME["surface"], border_color=THEME["border"])
-        section["badge"].configure(
-            fg_color=THEME.get(section["badge_fg"], section["badge_fg"]),
-            text_color=THEME.get(section["badge_text_color"], section["badge_text_color"]),
-        )
         section["title"].configure(text_color=THEME["text"])
         section["desc"].configure(text_color=THEME["muted"])
         section["body"].configure(fg_color=THEME["surface"])
         section["content"].configure(fg_color=THEME["surface"])
 
     update_selected_app_highlight()
+    update_helper_button_text()
     update_navigation_styles()
-    update_filter_buttons()
+    update_helper_button_visibility()
+    update_history_filter_cards()
     render_history_view()
 
 
@@ -362,25 +428,31 @@ app.bind_all("<MouseWheel>", on_global_mousewheel)
 def build_icon(app_name, size):
     cache_key = (app_name, size)
     if cache_key not in icon_cache:
-        logo_path = os.path.join(os.path.dirname(__file__), "icons", apps[app_name]["logo"])
+        logo_path = resource_path(os.path.join("icons", apps[app_name]["logo"]))
         if os.path.exists(logo_path):
             img = Image.open(logo_path).resize((size, size), Image.LANCZOS)
             icon_cache[cache_key] = CTkImage(light_image=img, dark_image=img, size=(size, size))
     return icon_cache.get(cache_key)
 
 
-def create_panel(parent, badge_text, badge_fg, badge_text_color, title_text, description_text):
+def build_ui_icon(filename, size):
+    cache_key = (filename, size)
+    if cache_key not in icon_cache:
+        icon_path = resource_path(os.path.join("icons", filename))
+        if os.path.exists(icon_path):
+            img = Image.open(icon_path).resize((size, size), Image.LANCZOS)
+            icon_cache[cache_key] = CTkImage(light_image=img, dark_image=img, size=(size, size))
+    return icon_cache.get(cache_key)
+
+
+def create_panel(parent, title_text, description_text):
     global active_scroll_canvas
-    resolved_badge_fg = THEME.get(badge_fg, badge_fg)
-    resolved_badge_text_color = THEME.get(badge_text_color, badge_text_color)
 
     panel = ctk.CTkFrame(parent, fg_color=THEME["surface"], corner_radius=14, border_width=1, border_color=THEME["border"])
     header = ctk.CTkFrame(panel, fg_color="transparent")
     header.pack(fill="x", padx=14, pady=(14, 8))
-    badge = ctk.CTkLabel(header, text=badge_text, width=78, height=24, corner_radius=12, fg_color=resolved_badge_fg, text_color=resolved_badge_text_color, font=(FONT, 10, "bold"))
-    badge.pack(anchor="w")
     title = ctk.CTkLabel(header, text=title_text, font=(FONT, 15, "bold"), text_color=THEME["text"])
-    title.pack(anchor="w", pady=(8, 2))
+    title.pack(anchor="w", pady=(0, 2))
     desc = ctk.CTkLabel(header, text=description_text, font=(FONT, 10), text_color=THEME["muted"])
     desc.pack(anchor="w")
     body = ctk.CTkFrame(panel, fg_color=THEME["surface"])
@@ -417,9 +489,6 @@ def create_panel(parent, badge_text, badge_fg, badge_text_color, title_text, des
     panel_canvases.append(canvas)
     panel_sections.append({
         "panel": panel,
-        "badge": badge,
-        "badge_fg": badge_fg,
-        "badge_text_color": badge_text_color,
         "title": title,
         "desc": desc,
         "body": body,
@@ -503,6 +572,59 @@ def apply_language_theme_choices(language):
     apply_theme_menu_language(theme_menu, language, settings["Theme"])
 
 
+def open_external_link(url):
+    try:
+        webbrowser.open_new_tab(url)
+    except Exception as e:
+        logger.warning(f"Bağlantı açılamadı: {e}")
+
+
+def update_helper_button_text():
+    if "helper_button" not in globals():
+        return
+    default_text = get_ui_texts(lang_texts).get("helper_tool_button", "Yardımcı Araç")
+    selected_app = app_list.get() if "app_list" in globals() else ""
+    helper_button.configure(text=IDM_HELPER_BUTTON_TEXT if selected_app == IDM_APP_NAME else default_text)
+
+
+def set_settings_nav(section_key):
+    settings_nav_state["active"] = section_key
+    update_settings_nav_styles()
+    update_settings_content()
+    if section_key == "general":
+        app.after(0, lambda: theme_menu.focus_set())
+
+
+def update_settings_nav_styles():
+    nav_widgets = {
+        "general": globals().get("settings_nav_general"),
+        "activate": globals().get("settings_nav_activate"),
+    }
+    for key, widget in nav_widgets.items():
+        if widget is None:
+            continue
+        is_active = settings_nav_state["active"] == key
+        widget.configure(
+            fg_color=THEME["accent_soft"] if is_active else "transparent",
+            hover_color=THEME["surface_hover"],
+            text_color=THEME["accent"] if is_active else THEME["text"],
+        )
+
+
+def update_settings_content():
+    content_sections = {
+        "general": globals().get("settings_general_content"),
+        "activate": globals().get("settings_activate_content"),
+    }
+    for key, section in content_sections.items():
+        if section is None:
+            continue
+        if key == settings_nav_state["active"]:
+            section.pack(fill="both", expand=True)
+        else:
+            section.pack_forget()
+
+
 navigation_card = ctk.CTkFrame(shell_frame, fg_color=THEME["surface"], corner_radius=14, border_width=1, border_color=THEME["border"])
 navigation_card.pack(fill="x", pady=(0, 10))
 navigation_inner = ctk.CTkFrame(navigation_card, fg_color="transparent")
@@ -563,35 +685,8 @@ update_all_button.pack(side="left", padx=(0, 8))
 scan_button = ctk.CTkButton(control_actions, text="Tara", width=90, height=32, corner_radius=10, fg_color=THEME["surface_soft"], hover_color=THEME["surface_hover"], text_color=THEME["text"], font=(FONT, 11, "bold"))
 scan_button.pack(side="left")
 
-toolbar_row = ctk.CTkFrame(control_inner, fg_color="transparent")
-search_card = ctk.CTkFrame(toolbar_row, fg_color=THEME["surface_alt"], corner_radius=12, border_width=1, border_color=THEME["border"])
-search_card.pack(side="left", fill="x", expand=True, padx=(0, 8))
-search_inner = ctk.CTkFrame(search_card, fg_color="transparent")
-search_inner.pack(fill="x", padx=12, pady=10)
-search_label = ctk.CTkLabel(search_inner, text="Ara", font=(FONT, 10, "bold"), text_color=THEME["muted"])
-search_label.pack(anchor="w")
-search_var = tk.StringVar()
-search_var.trace_add("write", lambda *_args: set_search_query(search_var.get()))
-search_entry = ctk.CTkEntry(search_inner, textvariable=search_var, placeholder_text="Uygulama adı veya paket kimliği ile ara", height=36, corner_radius=10, fg_color=THEME["surface"], border_color=THEME["border"], text_color=THEME["text"])
-search_entry.pack(fill="x", pady=(8, 0))
-
-filter_panel = ctk.CTkFrame(toolbar_row, fg_color=THEME["surface_alt"], corner_radius=12, border_width=1, border_color=THEME["border"], width=320)
-filter_panel.pack(side="left", fill="y", padx=(8, 0))
-filter_panel.pack_propagate(False)
-filter_inner = ctk.CTkFrame(filter_panel, fg_color="transparent")
-filter_inner.pack(fill="both", expand=True, padx=12, pady=10)
-filter_title = ctk.CTkLabel(filter_inner, text="Filtre", font=(FONT, 10, "bold"), text_color=THEME["muted"])
-filter_title.pack(anchor="w")
-filter_row = ctk.CTkFrame(filter_inner, fg_color="transparent")
-filter_row.pack(fill="x", pady=(8, 0))
-filter_buttons = {}
-for key, label in [("all", "Tümü"), ("installed", "Kurulu"), ("ready", "Hazır")]:
-    button = ctk.CTkButton(filter_row, text=label, command=lambda selected=key: set_status_filter(selected), width=90, height=34, corner_radius=10, border_width=1, fg_color=THEME["surface_soft"], hover_color=THEME["surface_hover"], border_color=THEME["border"], text_color=THEME["text"], font=(FONT, 10, "bold"))
-    button.pack(side="left", padx=(0, 8))
-    filter_buttons[key] = button
-
 action_row = ctk.CTkFrame(control_inner, fg_color="transparent")
-action_row.pack(fill="x", pady=(12, 0))
+action_row.pack(fill="x", pady=(10, 0))
 
 info_panel = ctk.CTkFrame(action_row, fg_color=THEME["surface_alt"], corner_radius=12, border_width=1, border_color=THEME["border"])
 info_panel.pack(side="left", fill="both", expand=True, padx=(0, 8))
@@ -612,7 +707,7 @@ selected_search_icon.pack(side="left", padx=(12, 4), pady=7)
 draw_search_icon(selected_search_icon)
 selected_search_entry = ctk.CTkEntry(selected_search_shell, placeholder_text="Uygulama ara", height=30, corner_radius=0, border_width=0, fg_color=THEME["surface"], border_color=THEME["surface"], text_color=THEME["text"])
 selected_search_entry.pack(side="left", fill="both", expand=True, padx=(0, 10), pady=2)
-selected_search_entry.bind("<KeyRelease>", lambda _event: set_search_query(selected_search_entry.get()))
+selected_search_entry.bind("<KeyRelease>", lambda _event: set_search_query(selected_search_entry.get(), source="selected"))
 selected_search_entry.bind("<Escape>", lambda _event: close_search_focus())
 selected_search_entry.bind("<FocusOut>", lambda _event: app.after(0, lambda: selected_search_entry.selection_clear()))
 selected_search_shell.bind("<Button-1>", lambda _event: selected_search_entry.focus_set())
@@ -650,24 +745,26 @@ install_status_label.grid(row=1, column=2, sticky="w", padx=(0, 8), pady=2)
 install_status_value = ctk.CTkLabel(details_grid, text="", font=(FONT, 10, "bold"), text_color=THEME["text"], anchor="w")
 install_status_value.grid(row=1, column=3, sticky="w", pady=2)
 
-actions_panel = ctk.CTkFrame(action_row, fg_color=THEME["surface_alt"], corner_radius=12, border_width=1, border_color=THEME["border"])
+actions_panel = ctk.CTkFrame(action_row, fg_color=THEME["surface_alt"], corner_radius=12, border_width=1, border_color=THEME["border"], width=156, height=208)
 actions_panel.pack(side="left", fill="y", padx=(8, 0))
+actions_panel.pack_propagate(False)
 actions_title = ctk.CTkLabel(actions_panel, text="İşlemler", font=(FONT, 11, "bold"), text_color=THEME["muted"])
-actions_title.pack(anchor="w", padx=12, pady=(10, 8))
-install_button = ctk.CTkButton(actions_panel, text="Yükle", width=130, height=34, corner_radius=10, fg_color=THEME["success"], hover_color=THEME["success_hover"], text_color=THEME["button_text"], font=(FONT, 11, "bold"), command=lambda: manage_app("install"))
-install_button.pack(anchor="w", padx=12, pady=(0, 8))
-uninstall_button = ctk.CTkButton(actions_panel, text="Kaldır", width=130, height=34, corner_radius=10, fg_color=THEME["danger"], hover_color=THEME["danger_hover"], text_color=THEME["button_text"], font=(FONT, 11, "bold"), command=lambda: manage_app("uninstall"))
-uninstall_button.pack(anchor="w", padx=12, pady=(0, 8))
-update_button = ctk.CTkButton(actions_panel, text="Güncelle", width=130, height=34, corner_radius=10, fg_color=THEME["surface_soft"], hover_color=THEME["surface_hover"], border_width=1, border_color=THEME["border_strong"], text_color=THEME["text"], font=(FONT, 11, "bold"))
-update_button.pack(anchor="w", padx=12, pady=(0, 12))
+actions_title.pack(anchor="w", padx=12, pady=(10, 6))
+install_button = ctk.CTkButton(actions_panel, text="Yükle", width=128, height=30, corner_radius=9, fg_color=THEME["success"], hover_color=THEME["success_hover"], text_color=THEME["button_text"], font=(FONT, 11, "bold"), command=lambda: manage_app("install"))
+install_button.pack(anchor="w", padx=12, pady=(0, 6))
+uninstall_button = ctk.CTkButton(actions_panel, text="Kaldır", width=128, height=30, corner_radius=9, fg_color=THEME["danger"], hover_color=THEME["danger_hover"], text_color=THEME["button_text"], font=(FONT, 11, "bold"), command=lambda: manage_app("uninstall"))
+uninstall_button.pack(anchor="w", padx=12, pady=(0, 6))
+update_button = ctk.CTkButton(actions_panel, text="Güncelle", width=128, height=30, corner_radius=9, fg_color=THEME["accent"], hover_color=THEME["accent_hover"], border_width=1, border_color=THEME["accent"], text_color=THEME["button_text"], font=(FONT, 11, "bold"))
+update_button.pack(anchor="w", padx=12, pady=(0, 6))
+helper_button = ctk.CTkButton(actions_panel, text="Yardımcı Araç", width=128, height=30, corner_radius=9, border_width=1, fg_color=THEME["surface_soft"], hover_color=THEME["surface_hover"], border_color=THEME["border_strong"], text_color=THEME["text"], font=(FONT, 11, "bold"))
 
 main_frame = ctk.CTkFrame(operations_view, fg_color="transparent")
 main_frame.pack(fill="both", expand=True)
 panel_row = ctk.CTkFrame(main_frame, fg_color="transparent")
 panel_row.pack(fill="both", expand=True)
-installed_frame, installed_label, installed_icons_frame = create_panel(panel_row, "Kurulu", "badge_installed_bg", "badge_installed_text", "Yüklü Uygulamalar", "Sisteminizde bulunan uygulamalar burada görünür.")
+installed_frame, installed_label, installed_icons_frame = create_panel(panel_row, "Yüklü Uygulamalar", "Sisteminizde bulunan uygulamalar burada görünür.")
 installed_frame.pack(side="left", fill="both", expand=True, padx=(0, 8))
-not_installed_frame, not_installed_label, not_installed_icons_frame = create_panel(panel_row, "Hazır", "badge_ready_bg", "badge_ready_text", "Yüklü Olmayan Uygulamalar", "Kurulabilir uygulamaları bu panelden takip edebilirsiniz.")
+not_installed_frame, not_installed_label, not_installed_icons_frame = create_panel(panel_row, "Yüklü Olmayan Uygulamalar", "Kurulabilir uygulamaları bu panelden takip edebilirsiniz.")
 not_installed_frame.pack(side="left", fill="both", expand=True, padx=(8, 0))
 
 history_card = ctk.CTkFrame(history_view, fg_color=THEME["surface"], corner_radius=14, border_width=1, border_color=THEME["border"])
@@ -678,7 +775,11 @@ history_header = ctk.CTkFrame(history_inner, fg_color="transparent")
 history_header.pack(fill="x")
 history_title = ctk.CTkLabel(history_header, text="Son İşlemler", font=(FONT, 16, "bold"), text_color=THEME["text"])
 history_title.pack(side="left")
-history_refresh_button = ctk.CTkButton(history_header, text="Yenile", width=96, height=32, corner_radius=10, border_width=1, fg_color=THEME["surface_soft"], hover_color=THEME["surface_hover"], border_color=THEME["border"], text_color=THEME["text"], font=(FONT, 10, "bold"))
+history_actions = ctk.CTkFrame(history_header, fg_color="transparent")
+history_actions.pack(side="right")
+history_clear_button = ctk.CTkButton(history_actions, text="Temizle", width=96, height=32, corner_radius=10, border_width=1, fg_color=THEME["danger"], hover_color=THEME["danger_hover"], border_color=THEME["danger"], text_color=THEME["button_text"], font=(FONT, 10, "bold"))
+history_clear_button.pack(side="left", padx=(0, 8))
+history_refresh_button = ctk.CTkButton(history_actions, text="Yenile", width=96, height=32, corner_radius=10, border_width=1, fg_color=THEME["success"], hover_color=THEME["success_hover"], border_color=THEME["success"], text_color=THEME["button_text"], font=(FONT, 10, "bold"))
 history_refresh_button.pack(side="right")
 history_subtitle = ctk.CTkLabel(history_inner, text="Son yükleme, kaldırma ve güncelleme sonuçlarını zaman bilgisiyle burada takip edebilirsiniz.", font=(FONT, 10), text_color=THEME["muted"])
 history_subtitle.pack(anchor="w", pady=(8, 12))
@@ -711,6 +812,15 @@ history_issue_title = ctk.CTkLabel(history_issue_inner, text="Uyarı / Hata", fo
 history_issue_title.pack(anchor="w")
 history_issue_value = ctk.CTkLabel(history_issue_inner, text="0", font=(FONT, 18, "bold"), text_color=THEME["danger"])
 history_issue_value.pack(anchor="w", pady=(4, 0))
+
+for widget in [history_total_card, history_total_inner, history_total_title, history_total_value]:
+    widget.bind("<Button-1>", lambda _event: set_history_filter("all"))
+
+for widget in [history_success_card, history_success_inner, history_success_title, history_success_value]:
+    widget.bind("<Button-1>", lambda _event: set_history_filter("success"))
+
+for widget in [history_issue_card, history_issue_inner, history_issue_title, history_issue_value]:
+    widget.bind("<Button-1>", lambda _event: set_history_filter("issues"))
 
 history_feed_card = ctk.CTkFrame(history_inner, fg_color=THEME["surface_alt"], corner_radius=14, border_width=1, border_color=THEME["border"])
 history_feed_card.pack(fill="both", expand=True)
@@ -768,35 +878,137 @@ settings_card = ctk.CTkFrame(settings_view, fg_color=THEME["surface"], corner_ra
 settings_card.pack(fill="both", expand=True)
 settings_inner = ctk.CTkFrame(settings_card, fg_color="transparent")
 settings_inner.pack(fill="both", expand=True, padx=14, pady=14)
-settings_title = ctk.CTkLabel(settings_inner, text="Ayarlar", font=(FONT, 16, "bold"), text_color=THEME["text"])
-settings_title.pack(anchor="w")
-settings_subtitle = ctk.CTkLabel(settings_inner, text="Görünümü ve dil tercihlerini mevcut pencere içinde yönetin.", font=(FONT, 10), text_color=THEME["muted"])
-settings_subtitle.pack(anchor="w", pady=(6, 12))
-settings_grid = ctk.CTkFrame(settings_inner, fg_color="transparent")
-settings_grid.pack(fill="x")
-appearance_card = ctk.CTkFrame(settings_grid, fg_color=THEME["surface_alt"], corner_radius=14, border_width=1, border_color=THEME["border"])
-appearance_card.pack(side="left", fill="both", expand=True, padx=(0, 8))
-appearance_inner = ctk.CTkFrame(appearance_card, fg_color="transparent")
-appearance_inner.pack(fill="both", expand=True, padx=14, pady=14)
-appearance_title = ctk.CTkLabel(appearance_inner, text="Görünüm", font=(FONT, 12, "bold"), text_color=THEME["text"])
-appearance_title.pack(anchor="w")
-appearance_desc = ctk.CTkLabel(appearance_inner, text="Açık veya koyu modu seçin.", font=(FONT, 10), text_color=THEME["muted"])
-appearance_desc.pack(anchor="w", pady=(4, 10))
-theme_menu = ctk.CTkOptionMenu(appearance_inner, values=["Dark", "Light"], command=change_theme, width=180, height=36, fg_color=THEME["surface"], button_color=THEME["input_button"], button_hover_color=THEME["input_button_hover"], dropdown_fg_color=THEME["surface"], dropdown_hover_color=THEME["surface_hover"], text_color=THEME["text"], font=(FONT, 11, "bold"))
-theme_menu.pack(anchor="w")
+settings_layout = ctk.CTkFrame(settings_inner, fg_color="transparent")
+settings_layout.pack(fill="both", expand=True)
+settings_sidebar = ctk.CTkFrame(settings_layout, fg_color=THEME["surface_alt"], corner_radius=16, border_width=1, border_color=THEME["border"], width=240)
+settings_sidebar.pack(side="left", fill="y", padx=(0, 18))
+settings_sidebar.pack_propagate(False)
+settings_sidebar_inner = ctk.CTkFrame(settings_sidebar, fg_color="transparent")
+settings_sidebar_inner.pack(fill="both", expand=True, padx=16, pady=16)
+settings_sidebar_title = ctk.CTkLabel(settings_sidebar_inner, text="MENÜ", font=(FONT, 10, "bold"), text_color=THEME["muted"])
+settings_sidebar_title.pack(anchor="w", pady=(0, 12))
+settings_nav_general = ctk.CTkButton(settings_sidebar_inner, text="Genel", height=40, corner_radius=12, fg_color=THEME["accent_soft"], hover_color=THEME["surface_hover"], text_color=THEME["accent"], anchor="w", font=(FONT, 13, "bold"), command=lambda: set_settings_nav("general"))
+settings_nav_general.pack(fill="x", pady=(0, 8))
+settings_nav_activate = ctk.CTkButton(settings_sidebar_inner, text="Activate", height=36, corner_radius=10, fg_color="transparent", hover_color=THEME["surface_hover"], text_color=THEME["text"], anchor="w", font=(FONT, 12, "bold"), command=lambda: set_settings_nav("activate"))
+settings_nav_activate.pack(fill="x")
 
-language_card = ctk.CTkFrame(settings_grid, fg_color=THEME["surface_alt"], corner_radius=14, border_width=1, border_color=THEME["border"])
-language_card.pack(side="left", fill="both", expand=True, padx=(8, 0))
-language_inner = ctk.CTkFrame(language_card, fg_color="transparent")
-language_inner.pack(fill="both", expand=True, padx=14, pady=14)
-language_title = ctk.CTkLabel(language_inner, text="Dil", font=(FONT, 12, "bold"), text_color=THEME["text"])
+settings_content = ctk.CTkFrame(settings_layout, fg_color="transparent")
+settings_content.pack(side="left", fill="both", expand=True)
+
+settings_general_content = ctk.CTkFrame(settings_content, fg_color="transparent")
+settings_general_content.pack(fill="both", expand=True)
+appearance_row = ctk.CTkFrame(settings_general_content, fg_color="transparent")
+appearance_row.pack(fill="x", pady=(8, 12))
+appearance_meta = ctk.CTkFrame(appearance_row, fg_color="transparent")
+appearance_meta.pack(side="left", fill="x", expand=True)
+appearance_title = ctk.CTkLabel(appearance_meta, text="Tema Modu", font=(FONT, 14, "bold"), text_color=THEME["text"])
+appearance_title.pack(anchor="w")
+appearance_desc = ctk.CTkLabel(appearance_meta, text="Açık veya koyu tema seçin.", font=(FONT, 11), text_color=THEME["muted"], justify="left")
+appearance_desc.pack(anchor="w", pady=(4, 0))
+theme_menu = ctk.CTkOptionMenu(appearance_row, values=["Dark", "Light"], command=change_theme, width=190, height=38, fg_color=THEME["surface"], button_color=THEME["input_button"], button_hover_color=THEME["input_button_hover"], dropdown_fg_color=THEME["surface"], dropdown_hover_color=THEME["surface_hover"], text_color=THEME["text"], font=(FONT, 11, "bold"))
+theme_menu.pack(side="right")
+
+language_row = ctk.CTkFrame(settings_general_content, fg_color="transparent")
+language_row.pack(fill="x", pady=(0, 6))
+language_meta = ctk.CTkFrame(language_row, fg_color="transparent")
+language_meta.pack(side="left", fill="x", expand=True)
+language_title = ctk.CTkLabel(language_meta, text="Dil", font=(FONT, 14, "bold"), text_color=THEME["text"])
 language_title.pack(anchor="w")
-language_desc = ctk.CTkLabel(language_inner, text="Arayüz dilini buradan değiştirin.", font=(FONT, 10), text_color=THEME["muted"])
-language_desc.pack(anchor="w", pady=(4, 10))
-language_menu = ctk.CTkOptionMenu(language_inner, values=["Türkçe", "English", "Русский", "Deutsch", "中文", "Español", "العربية"], command=lambda language: change_language(language), width=180, height=36, fg_color=THEME["surface"], button_color=THEME["input_button"], button_hover_color=THEME["input_button_hover"], dropdown_fg_color=THEME["surface"], dropdown_hover_color=THEME["surface_hover"], text_color=THEME["text"], font=(FONT, 11, "bold"))
-language_menu.pack(anchor="w")
-settings_note = ctk.CTkLabel(settings_inner, text="Yeni pencere açılmaz; görünüm değişiklikleri doğrudan mevcut ekranda uygulanır.", font=(FONT, 10), text_color=THEME["muted"])
-settings_note.pack(anchor="w", pady=(12, 0))
+language_desc = ctk.CTkLabel(language_meta, text="Uygulama dilini seçin.", font=(FONT, 11), text_color=THEME["muted"], justify="left")
+language_desc.pack(anchor="w", pady=(4, 0))
+language_menu = ctk.CTkOptionMenu(language_row, values=["Türkçe", "English", "Русский", "Deutsch", "中文", "Español", "العربية"], command=lambda language: change_language(language), width=190, height=38, fg_color=THEME["surface"], button_color=THEME["input_button"], button_hover_color=THEME["input_button_hover"], dropdown_fg_color=THEME["surface"], dropdown_hover_color=THEME["surface_hover"], text_color=THEME["text"], font=(FONT, 11, "bold"))
+language_menu.pack(side="right")
+
+settings_activate_content = ctk.CTkFrame(settings_content, fg_color="transparent")
+activate_windows_row = ctk.CTkFrame(settings_activate_content, fg_color="transparent")
+activate_windows_row.pack(fill="x", pady=(8, 12))
+activate_windows_meta = ctk.CTkFrame(activate_windows_row, fg_color="transparent")
+activate_windows_meta.pack(side="left", fill="x", expand=True)
+activate_windows_button = ctk.CTkButton(activate_windows_row, text="Windows", width=190, height=38, corner_radius=10, fg_color=THEME["accent"], hover_color=THEME["accent_hover"], text_color=THEME["button_text"], font=(FONT, 11, "bold"), command=lambda: None)
+activate_windows_button.pack(side="right")
+activate_windows_desc = ctk.CTkLabel(activate_windows_meta, text="Windows Etkinleştirme", font=(FONT, 15, "bold"), text_color=THEME["text"], justify="left")
+activate_windows_desc.pack(anchor="w", pady=(7, 0))
+
+activate_office_row = ctk.CTkFrame(settings_activate_content, fg_color="transparent")
+activate_office_row.pack(fill="x", pady=(0, 12))
+activate_office_meta = ctk.CTkFrame(activate_office_row, fg_color="transparent")
+activate_office_meta.pack(side="left", fill="x", expand=True)
+activate_office_button = ctk.CTkButton(activate_office_row, text="Office", width=190, height=38, corner_radius=10, fg_color=THEME["accent"], hover_color=THEME["accent_hover"], text_color=THEME["button_text"], font=(FONT, 11, "bold"), command=lambda: None)
+activate_office_button.pack(side="right")
+activate_office_desc = ctk.CTkLabel(activate_office_meta, text="Office Etkinleştirme", font=(FONT, 15, "bold"), text_color=THEME["text"], justify="left")
+activate_office_desc.pack(anchor="w", pady=(7, 0))
+
+activate_idm_row = ctk.CTkFrame(settings_activate_content, fg_color="transparent")
+activate_idm_row.pack(fill="x")
+activate_idm_meta = ctk.CTkFrame(activate_idm_row, fg_color="transparent")
+activate_idm_meta.pack(side="left", fill="x", expand=True)
+activate_idm_button = ctk.CTkButton(activate_idm_row, text="IDM", width=190, height=38, corner_radius=10, fg_color=THEME["accent"], hover_color=THEME["accent_hover"], text_color=THEME["button_text"], font=(FONT, 11, "bold"))
+activate_idm_button.pack(side="right")
+activate_idm_desc = ctk.CTkLabel(activate_idm_meta, text="IDM Etkinleştirme", font=(FONT, 15, "bold"), text_color=THEME["text"], justify="left")
+activate_idm_desc.pack(anchor="w", pady=(7, 0))
+
+
+def apply_responsive_layout(width=None):
+    if width is None or width <= 1:
+        width = app.winfo_width()
+
+    header_mode = "stacked" if width < 1020 else "wide"
+    actions_mode = "stacked" if width < 980 else "wide"
+    panel_mode = "stacked" if width < 1180 else "wide"
+    settings_mode = "stacked" if width < 980 else "wide"
+
+    if responsive_state["header_mode"] != header_mode:
+        control_title.pack_forget()
+        control_actions.pack_forget()
+        if header_mode == "stacked":
+            control_title.pack(anchor="w")
+            control_actions.pack(anchor="w", pady=(10, 0))
+        else:
+            control_title.pack(side="left")
+            control_actions.pack(side="right")
+        responsive_state["header_mode"] = header_mode
+
+    if responsive_state["actions_mode"] != actions_mode:
+        info_panel.pack_forget()
+        actions_panel.pack_forget()
+        if actions_mode == "stacked":
+            actions_panel.configure(width=0, height=152)
+            info_panel.pack(fill="both", expand=True, pady=(0, 8))
+            actions_panel.pack(fill="x")
+        else:
+            actions_panel.configure(width=156, height=208)
+            info_panel.pack(side="left", fill="both", expand=True, padx=(0, 8))
+            actions_panel.pack(side="left", fill="y", padx=(8, 0))
+        responsive_state["actions_mode"] = actions_mode
+
+    if responsive_state["panel_mode"] != panel_mode:
+        installed_frame.pack_forget()
+        not_installed_frame.pack_forget()
+        if panel_mode == "stacked":
+            installed_frame.pack(fill="both", expand=True, pady=(0, 8))
+            not_installed_frame.pack(fill="both", expand=True, pady=(8, 0))
+        else:
+            installed_frame.pack(side="left", fill="both", expand=True, padx=(0, 8))
+            not_installed_frame.pack(side="left", fill="both", expand=True, padx=(8, 0))
+        responsive_state["panel_mode"] = panel_mode
+
+    if responsive_state["settings_mode"] != settings_mode:
+        settings_sidebar.pack_forget()
+        settings_content.pack_forget()
+        if settings_mode == "stacked":
+            settings_sidebar.configure(width=0, height=104)
+            settings_sidebar.pack(fill="x", pady=(0, 12))
+            settings_content.pack(fill="both", expand=True)
+        else:
+            settings_sidebar.configure(width=240, height=0)
+            settings_sidebar.pack(side="left", fill="y", padx=(0, 18))
+            settings_content.pack(side="left", fill="both", expand=True)
+        responsive_state["settings_mode"] = settings_mode
+
+
+def handle_window_resize(event):
+    if event.widget is app:
+        apply_responsive_layout(event.width)
 
 
 def select_app(app_name: str) -> None:
@@ -857,21 +1069,6 @@ def add_icons(app_list, container):
             widget.bind("<Button-1>", lambda _event, selected=app_name: select_app(selected))
             widget.bind("<Enter>", activate_scroll_target)
 
-        # Sadece yüklü uygulamalarda güncelleme kontrolü yap
-        if app_name in scan_cache.get("installed", []):
-            def check_update(app_n=app_name, app_i=apps[app_name]["id"], tile_widget=tile):
-                try:
-                    upgrade_available, _ = has_available_upgrade(app_n, app_i)
-                    if upgrade_available:
-                        def create_badge():
-                            badge_label = ctk.CTkLabel(tile_widget, text="●", text_color=THEME["surface_soft"], font=(FONT, 10, "bold"), width=16, height=16, fg_color=THEME["danger"], corner_radius=8)
-                            badge_label.place(relx=0.9, rely=0.05, anchor="ne")
-                        app.after(0, create_badge)
-                except Exception as e:
-                    logger.debug(f"Güncelleme rozeti kontrolü başarısız ({app_n}): {e}")
-
-            threading.Thread(target=check_update, daemon=True).start()
-
         app_tile_widgets[app_name] = {"tile": tile, "name_label": name_label}
         col += 1
         if col >= max_columns:
@@ -896,16 +1093,12 @@ def render_installed_apps(installed_apps: set[str]) -> None:
         ctk.CTkLabel(installed_icons_frame, text=empty_state, text_color=THEME["muted"], font=(FONT, 11)).grid(row=0, column=0, padx=12, pady=12, sticky="w")
     if not not_installed_apps:
         ctk.CTkLabel(not_installed_icons_frame, text=empty_state, text_color=THEME["muted"], font=(FONT, 11)).grid(row=0, column=0, padx=12, pady=12, sticky="w")
+    set_activate_idm_button_state(installed=IDM_APP_NAME in installed_apps)
     update_selected_app_highlight()
 
 
 def matches_search_filters(app_name, is_installed):
     query = search_state["query"].strip().lower()
-    status = search_state["status"]
-    if status == "installed" and not is_installed:
-        return False
-    if status == "ready" and is_installed:
-        return False
     if not query:
         return True
     app_id = apps[app_name]["id"].lower()
@@ -917,30 +1110,18 @@ def refresh_catalog_view():
     render_installed_apps(set(scan_cache["installed"]))
 
 
-def set_search_query(value):
-    search_state["query"] = value or ""
+def sync_search_inputs(query):
+    normalized_query = query or ""
+    if selected_search_entry.get() != normalized_query:
+        selected_search_entry.delete(0, "end")
+        selected_search_entry.insert(0, normalized_query)
+
+
+def set_search_query(value, source=None):
+    normalized_value = value or ""
+    search_state["query"] = normalized_value
+    sync_search_inputs(normalized_value)
     refresh_catalog_view()
-
-
-def set_status_filter(status_key):
-    search_state["status"] = status_key
-    update_filter_buttons()
-    refresh_catalog_view()
-
-
-def update_filter_buttons():
-    filter_meta = {
-        "all": ("Tümü", THEME["accent"], THEME["button_text"], THEME["accent"]),
-        "installed": ("Kurulu", THEME["accent"], THEME["button_text"], THEME["accent"]),
-        "ready": ("Hazır", THEME["accent"], THEME["button_text"], THEME["accent"]),
-    }
-    for key, button in globals().get("filter_buttons", {}).items():
-        is_active = search_state["status"] == key
-        button.configure(
-            fg_color=filter_meta[key][1] if is_active else THEME["surface_soft"],
-            text_color=filter_meta[key][2] if is_active else THEME["text"],
-            border_color=filter_meta[key][3] if is_active else THEME["border"],
-        )
 
 
 def add_history_item(action_name, target_name, result_status, detail_text):
@@ -957,6 +1138,12 @@ def add_history_item(action_name, target_name, result_status, detail_text):
     app.after(0, render_history_view)
 
 
+def clear_history_items():
+    history_items.clear()
+    save_history(history_items, MAX_HISTORY_ITEMS)
+    render_history_view()
+
+
 def get_history_status_style(status_name):
     mapping = {
         "success": (THEME["success_soft"], THEME["success"]),
@@ -965,6 +1152,28 @@ def get_history_status_style(status_name):
         "info": (THEME["surface_soft"], THEME["text"]),
     }
     return mapping.get(status_name, mapping["info"])
+
+
+def set_history_filter(mode):
+    history_filter_state["mode"] = mode
+    update_history_filter_cards()
+    render_history_view()
+
+
+def update_history_filter_cards():
+    card_map = {
+        "all": globals().get("history_total_card"),
+        "success": globals().get("history_success_card"),
+        "issues": globals().get("history_issue_card"),
+    }
+    for key, card in card_map.items():
+        if card is None:
+            continue
+        is_active = history_filter_state["mode"] == key
+        card.configure(
+            fg_color=THEME["accent_soft"] if is_active else THEME["surface_alt"],
+            border_color=THEME["accent"] if is_active else THEME["border"],
+        )
 
 
 def render_history_view():
@@ -986,11 +1195,22 @@ def render_history_view():
     if issue_value is not None:
         issue_value.configure(text=str(issue_count))
 
-    if not history_items:
-        ctk.CTkLabel(container, text="Henüz işlem kaydı yok", font=(FONT, 14, "bold"), text_color=THEME["text"]).pack(anchor="w", pady=(6, 4))
+    filter_mode = history_filter_state["mode"]
+    if filter_mode == "success":
+        filtered_items = [item for item in history_items if item["status"] == "success"]
+        empty_state = "Başarılı işlem kaydı yok"
+    elif filter_mode == "issues":
+        filtered_items = [item for item in history_items if item["status"] in {"warning", "error"}]
+        empty_state = "Uyarı veya hata kaydı yok"
+    else:
+        filtered_items = list(history_items)
+        empty_state = "Henüz işlem kaydı yok"
+
+    if not filtered_items:
+        ctk.CTkLabel(container, text=empty_state, font=(FONT, 14, "bold"), text_color=THEME["text"]).pack(anchor="w", pady=(6, 4))
         return
 
-    for item in history_items:
+    for item in filtered_items:
         badge_bg, badge_text = get_history_status_style(item["status"])
         detail_text = item.get("detail") or "İşlem tamamlandı"
         
@@ -1048,27 +1268,6 @@ def update_navigation_styles():
         )
         parts["underline"].configure(fg_color=THEME["accent"] if is_active else THEME["surface"])
 
-def scan_registry_uninstall(root, subkey):
-    names = []
-    if winreg is None:
-        return names
-    try:
-        with winreg.OpenKey(root, subkey) as key:
-            for i in range(0, winreg.QueryInfoKey(key)[0]):
-                try:
-                    skey_name = winreg.EnumKey(key, i)
-                    with winreg.OpenKey(key, skey_name) as sk:
-                        try:
-                            display_name = winreg.QueryValueEx(sk, "DisplayName")[0]
-                            names.append(display_name)
-                        except Exception:
-                            pass
-                except Exception:
-                    continue
-    except Exception:
-        pass
-    return names
-
 
 def get_registry_display_names(use_cache=True):
     return service_get_registry_display_names(
@@ -1092,9 +1291,31 @@ def get_app_aliases(app_name, app_id):
     return service_get_app_aliases(app_name, app_id, APP_ALIASES)
 
 
+def update_helper_button_visibility():
+    if "helper_button" not in globals() or "app_list" not in globals():
+        return
+    should_show = helper_button_state["visible"]
+    is_mapped = bool(helper_button.winfo_manager())
+    if should_show and not is_mapped:
+        helper_button.pack(anchor="w", padx=12, pady=(0, 6))
+    elif not should_show and is_mapped:
+        helper_button.pack_forget()
+
+
+def update_activate_idm_button_visibility():
+    if "activate_idm_button" not in globals():
+        return
+    should_show = activate_idm_button_state["visible"]
+    is_mapped = bool(activate_idm_button.winfo_manager())
+    if should_show and not is_mapped:
+        activate_idm_button.pack(side="right")
+    elif not should_show and is_mapped:
+        activate_idm_button.pack_forget()
+
+
 def set_interaction_enabled(enabled):
     state = "normal" if enabled else "disabled"
-    for widget_name in ["install_button", "uninstall_button", "update_button", "scan_button", "update_all_button", "app_list", "search_entry", "selected_search_entry", "theme_menu", "language_menu"]:
+    for widget_name in ["scan_button", "update_all_button", "app_list", "selected_search_entry", "theme_menu", "language_menu"]:
         widget = globals().get(widget_name)
         if widget is None:
             continue
@@ -1103,18 +1324,138 @@ def set_interaction_enabled(enabled):
         except Exception as e:
             logger.warning(f"Widget state güncellenemedi: {e}")
             continue
-    for button in globals().get("filter_buttons", {}).values():
-        try:
-            button.configure(state=state)
-        except Exception as e:
-            logger.warning(f"Filter button state güncellenemedi: {e}")
-            continue
+    apply_action_button_states()
     for parts in nav_items.values():
         try:
             parts["button"].configure(state=state)
         except Exception as e:
             logger.warning(f"Nav button state güncellenemedi: {e}")
             continue
+
+
+def apply_action_button_states():
+    desired_states = {
+        "install_button": selected_action_state["install"],
+        "uninstall_button": selected_action_state["uninstall"],
+        "update_button": selected_action_state["update"],
+        "helper_button": "normal" if helper_button_state["enabled"] else "disabled",
+        "activate_idm_button": "normal" if activate_idm_button_state["enabled"] else "disabled",
+    }
+    if operation_state["busy"]:
+        desired_states = {name: "disabled" for name in desired_states}
+    for widget_name, state in desired_states.items():
+        widget = globals().get(widget_name)
+        if widget is None:
+            continue
+        try:
+            if widget_name == "install_button":
+                enabled_style = {
+                    "fg_color": THEME["success"],
+                    "hover_color": THEME["success_hover"],
+                    "text_color": THEME["button_text"],
+                    "text_color_disabled": THEME["button_disabled_text"],
+                    "border_color": THEME["success"],
+                }
+                disabled_style = {
+                    "fg_color": THEME["button_disabled_bg"],
+                    "hover_color": THEME["button_disabled_bg"],
+                    "text_color": THEME["button_disabled_text"],
+                    "text_color_disabled": THEME["button_disabled_text"],
+                    "border_color": THEME["button_disabled_border"],
+                }
+            elif widget_name == "uninstall_button":
+                enabled_style = {
+                    "fg_color": THEME["danger"],
+                    "hover_color": THEME["danger_hover"],
+                    "text_color": THEME["button_text"],
+                    "text_color_disabled": THEME["button_disabled_text"],
+                    "border_color": THEME["danger"],
+                }
+                disabled_style = {
+                    "fg_color": THEME["button_disabled_bg"],
+                    "hover_color": THEME["button_disabled_bg"],
+                    "text_color": THEME["button_disabled_text"],
+                    "text_color_disabled": THEME["button_disabled_text"],
+                    "border_color": THEME["button_disabled_border"],
+                }
+            elif widget_name == "update_button":
+                enabled_style = {
+                    "fg_color": THEME["accent"],
+                    "hover_color": THEME["accent_hover"],
+                    "text_color": THEME["button_text"],
+                    "text_color_disabled": THEME["button_disabled_text"],
+                    "border_color": THEME["accent"],
+                }
+                disabled_style = {
+                    "fg_color": THEME["button_disabled_bg"],
+                    "hover_color": THEME["button_disabled_bg"],
+                    "text_color": THEME["button_disabled_text"],
+                    "text_color_disabled": THEME["button_disabled_text"],
+                    "border_color": THEME["button_disabled_border"],
+                }
+            elif widget_name == "activate_idm_button":
+                enabled_style = {
+                    "fg_color": THEME["accent"],
+                    "hover_color": THEME["accent_hover"],
+                    "text_color": THEME["button_text"],
+                    "text_color_disabled": THEME["button_disabled_text"],
+                    "border_color": THEME["accent"],
+                }
+                disabled_style = {
+                    "fg_color": THEME["button_disabled_bg"],
+                    "hover_color": THEME["button_disabled_bg"],
+                    "text_color": THEME["button_disabled_text"],
+                    "text_color_disabled": THEME["button_disabled_text"],
+                    "border_color": THEME["button_disabled_border"],
+                }
+            else:
+                enabled_style = {
+                    "fg_color": THEME["surface_soft"],
+                    "hover_color": THEME["surface_hover"],
+                    "text_color": THEME["text"],
+                    "text_color_disabled": THEME["button_disabled_text"],
+                    "border_color": THEME["border_strong"],
+                }
+                disabled_style = {
+                    "fg_color": THEME["button_disabled_bg"],
+                    "hover_color": THEME["button_disabled_bg"],
+                    "text_color": THEME["button_disabled_text"],
+                    "text_color_disabled": THEME["button_disabled_text"],
+                    "border_color": THEME["button_disabled_border"],
+                }
+            widget.configure(**(enabled_style if state == "normal" else disabled_style))
+            widget.configure(state=state)
+        except Exception as e:
+            logger.warning(f"Aksiyon butonu durumu güncellenemedi ({widget_name}): {e}")
+    update_helper_button_visibility()
+    update_activate_idm_button_visibility()
+
+
+def set_action_button_states(installed=None, can_update=False, loading=False):
+    if loading or installed is None:
+        selected_action_state.update({"install": "disabled", "uninstall": "disabled", "update": "disabled"})
+    elif installed:
+        selected_action_state.update({
+            "install": "disabled",
+            "uninstall": "normal",
+            "update": "normal" if can_update else "disabled",
+        })
+    else:
+        selected_action_state.update({"install": "normal", "uninstall": "disabled", "update": "disabled"})
+    apply_action_button_states()
+
+
+def set_helper_button_state(selected_app, installed=False, loading=False):
+    is_helper_app = selected_app == IDM_APP_NAME
+    helper_button_state["visible"] = is_helper_app
+    helper_button_state["enabled"] = is_helper_app and installed and not loading
+    apply_action_button_states()
+
+
+def set_activate_idm_button_state(installed=False):
+    activate_idm_button_state["visible"] = installed
+    activate_idm_button_state["enabled"] = installed
+    apply_action_button_states()
 
 
 def begin_operation(action_name):
@@ -1152,6 +1493,16 @@ def get_bulk_update_candidates():
 
 def is_app_installed_via_winget(app_id):
     return service_is_app_installed_via_winget(app_id, subprocess_module=subprocess, shutil_module=shutil)
+
+
+def run_helper_executable(exe_name):
+    return service_run_helper_executable(
+        exe_name,
+        base_dir=resource_path(""),
+        subprocess_module=subprocess,
+        os_module=os,
+    )
+
 
 def get_installed_apps(force_refresh=False):
     if not scan_lock.acquire(blocking=False):
@@ -1309,7 +1660,7 @@ def apply_operation_feedback(action_name, target_name, feedback, refresh_scan=Fa
         action_name,
         target_name,
         feedback,
-        refresh_scan_callback=(lambda: threaded_get_installed_apps(force_refresh=True)) if refresh_scan else None,
+        refresh_scan_callback=threaded_get_installed_apps if refresh_scan else None,
         refresh_details_callback=refresh_selected_app_details if refresh_details else None,
         hide_delay_ms=hide_delay_ms,
     )
@@ -1455,6 +1806,124 @@ def update_app():
     threading.Thread(target=process, daemon=True).start()
 
 
+def run_idm_helper(show_progress=True, require_selected_idm=True):
+    selected_app = app_list.get() if "app_list" in globals() else ""
+    if require_selected_idm and selected_app != IDM_APP_NAME:
+        return
+    target_app = IDM_APP_NAME
+    if not activate_idm_button_state["enabled"] and not helper_button_state["enabled"]:
+        return
+    if not begin_operation(IDM_HISTORY_ACTION_NAME):
+        return
+    if show_progress:
+        show_progress_modal("Yardımcı araç çalıştırılıyor", "Internet Download Manager için yardımcı araç başlatıldı.", 0)
+
+    def process():
+        try:
+            try:
+                return_code, output_text = run_helper_executable("idm.exe")
+            except FileNotFoundError:
+                feedback = helper_missing_feedback("idm.exe")
+                feedback["progress"] = 0
+                feedback["history_detail"] = "IDM etkinleştirme başlatılamadı. idm.exe bulunamadı."
+                apply_operation_feedback(
+                    IDM_HISTORY_ACTION_NAME,
+                    target_app,
+                    feedback,
+                    hide_delay_ms=1700,
+                )
+                return
+            except Exception as e:
+                feedback = helper_result(1, str(e))
+                feedback["progress"] = 0
+                feedback["history_detail"] = f"IDM etkinleştirme başarısız. Sebep: {str(e)}"
+                apply_operation_feedback(
+                    IDM_HISTORY_ACTION_NAME,
+                    target_app,
+                    feedback,
+                    hide_delay_ms=1800,
+                )
+                return
+
+            feedback = helper_result(return_code, output_text)
+            feedback["progress"] = 1 if feedback["history_status"] == "success" else 0
+            if feedback["history_status"] == "success":
+                feedback["history_detail"] = "IDM etkinleştirme başarıyla tamamlandı."
+            else:
+                feedback["history_detail"] = feedback.get("history_detail", "IDM etkinleştirme başarısız.")
+            apply_operation_feedback(
+                IDM_HISTORY_ACTION_NAME,
+                target_app,
+                feedback,
+                hide_delay_ms=1800,
+            )
+        finally:
+            end_operation()
+
+    threading.Thread(target=process, daemon=True).start()
+
+
+def run_idm_helper_from_settings():
+    run_idm_helper(show_progress=False, require_selected_idm=False)
+
+
+def run_activation_helper_from_settings(target_name):
+    if not begin_operation("Etkinleştirme"):
+        return
+
+    def process():
+        try:
+            try:
+                return_code, output_text = run_helper_executable("active.cmd")
+            except FileNotFoundError:
+                feedback = helper_missing_feedback("active.cmd")
+                feedback["progress"] = 0
+                feedback["history_detail"] = f"{target_name} etkinleştirme başlatılamadı. active.cmd bulunamadı."
+                apply_operation_feedback(
+                    "Etkinleştirme",
+                    target_name,
+                    feedback,
+                    hide_delay_ms=1700,
+                )
+                return
+            except Exception as e:
+                feedback = helper_result(1, str(e))
+                feedback["progress"] = 0
+                feedback["history_detail"] = f"{target_name} etkinleştirme başarısız. Sebep: {str(e)}"
+                apply_operation_feedback(
+                    "Etkinleştirme",
+                    target_name,
+                    feedback,
+                    hide_delay_ms=1800,
+                )
+                return
+
+            feedback = helper_result(return_code, output_text)
+            feedback["progress"] = 1 if feedback["history_status"] == "success" else 0
+            if feedback["history_status"] == "success":
+                feedback["history_detail"] = f"{target_name} etkinleştirme başarıyla tamamlandı."
+            else:
+                feedback["history_detail"] = feedback.get("history_detail", f"{target_name} etkinleştirme başarısız.")
+            apply_operation_feedback(
+                "Etkinleştirme",
+                target_name,
+                feedback,
+                hide_delay_ms=1800,
+            )
+        finally:
+            end_operation()
+
+    threading.Thread(target=process, daemon=True).start()
+
+
+def run_windows_activation_helper():
+    run_activation_helper_from_settings("Windows")
+
+
+def run_office_activation_helper():
+    run_activation_helper_from_settings("Office")
+
+
 def update_all_apps():
     if not begin_operation("Toplu Güncelleme"):
         return
@@ -1527,7 +1996,7 @@ def update_all_apps():
             final_title = "Toplu güncelleme tamamlandı" if failed_count == 0 else "Toplu güncelleme tamamlandı"
             app.after(0, lambda text=summary_text, title=final_title, progress=final_progress: update_progress_modal(title, text, progress))
             app.after(0, lambda text=summary_text: progress_hint_label.configure(text=text))
-            app.after(0, lambda: threaded_get_installed_apps(force_refresh=True))
+            app.after(0, threaded_get_installed_apps)
             app.after(0, refresh_selected_app_details)
             app.after(2200, hide_progress_modal)
             add_history_item("Toplu Güncelleme", "Katalog", bulk_final_status(failed_count), summary_text)
@@ -1546,6 +2015,9 @@ def refresh_selected_app_details():
     if selected_app not in apps:
         return
 
+    set_action_button_states(loading=True)
+    set_helper_button_state(selected_app, loading=True)
+    update_helper_button_text()
     selected_app_title.configure(text=selected_app)
     app_id = apps[selected_app]["id"]
     selected_app_icon = build_icon(selected_app, 46)
@@ -1558,6 +2030,11 @@ def refresh_selected_app_details():
 
     def worker():
         installed = is_app_installed(selected_app, app_id)
+        installed_via_winget = is_app_installed_via_winget(app_id) if installed else False
+        can_update = False
+        if installed and installed_via_winget:
+            upgrade_available, _ = has_available_upgrade(selected_app, app_id)
+            can_update = upgrade_available
         registry_details = get_registry_app_details(selected_app, app_id)
         winget_details = get_winget_package_details(app_id)
 
@@ -1565,21 +2042,29 @@ def refresh_selected_app_details():
         publisher_text = registry_details.get("publisher") or winget_details.get("publisher") or "Bilinmiyor"
         status_text = get_install_status_text(installed)
 
-        app.after(0, lambda: set_info_value(version_value, version_text))
-        app.after(0, lambda: set_info_value(publisher_value, publisher_text))
-        app.after(0, lambda: set_info_value(install_status_value, status_text))
+        def apply_selected_app_state():
+            if app_list.get() != selected_app:
+                return
+            set_info_value(version_value, version_text)
+            set_info_value(publisher_value, publisher_text)
+            set_info_value(install_status_value, status_text)
+            set_action_button_states(installed=installed, can_update=can_update)
+            set_helper_button_state(selected_app, installed=installed)
+            update_helper_button_text()
+
+        app.after(0, apply_selected_app_state)
 
     threading.Thread(target=worker, daemon=True).start()
 
 
 progress_overlay = ctk.CTkFrame(shell_frame, fg_color=THEME["overlay"])
 
-progress_card = ctk.CTkFrame(progress_overlay, fg_color=THEME["surface"], corner_radius=16, border_width=1, border_color=THEME["border"], width=360, height=170)
+progress_card = ctk.CTkFrame(progress_overlay, fg_color=THEME["surface"], corner_radius=16, border_width=1, border_color=THEME["border"], width=360, height=196)
 progress_card.place(relx=0.5, rely=0.5, anchor="center")
 progress_card.pack_propagate(False)
 
 progress_inner = ctk.CTkFrame(progress_card, fg_color="transparent")
-progress_inner.pack(fill="both", expand=True, padx=18, pady=16)
+progress_inner.pack(fill="both", expand=True, padx=18, pady=18)
 
 progress_badge = ctk.CTkLabel(progress_inner, text="İşlem Sürüyor", width=104, height=24, corner_radius=12, fg_color=THEME["progress_badge_bg"], text_color=THEME["progress_badge_text"], font=(FONT, 10, "bold"))
 progress_badge.pack(anchor="w")
@@ -1597,10 +2082,57 @@ progress_modal_bar.pack(fill="x", pady=(16, 8))
 progress_hint_label = ctk.CTkLabel(progress_inner, text="Kurulum adımları canlı olarak burada gösterilir.", font=(FONT, 10), text_color=THEME["muted"])
 progress_hint_label.pack(anchor="w")
 
-signature_frame = ctk.CTkFrame(shell_frame, fg_color="transparent")
+signature_frame = ctk.CTkFrame(shell_frame, fg_color="transparent", height=52)
 signature_frame.pack(fill="x", pady=(10, 0))
-signature_label = ctk.CTkLabel(signature_frame, text="Designed by Serhat-Can", font=(FONT, 11), text_color=THEME["muted"])
-signature_label.pack(anchor="e")
+signature_frame.pack_propagate(False)
+signature_canvas = tk.Canvas(signature_frame, width=360, height=28, bg=THEME["bg"], highlightthickness=0, bd=0, relief="flat")
+signature_canvas.place(relx=0.5, rely=0.5, anchor="center")
+signature_text_item = signature_canvas.create_text(
+    0,
+    14,
+    text="Designed by Serhat Can   ",
+    anchor="w",
+    fill=THEME["signature_text"],
+    font=("Bahnschrift SemiBold", 12, "bold"),
+)
+signature_animation = {"running": False, "x": 0}
+github_button = ctk.CTkButton(signature_frame, text="", width=50, height=50, corner_radius=0, border_width=0, fg_color="transparent", hover_color=THEME["bg"], image=build_ui_icon("github.png", 30), command=lambda: open_external_link(GITHUB_URL))
+github_button.place(relx=1.0, rely=0.5, x=-106, anchor="e")
+linkedin_button = ctk.CTkButton(signature_frame, text="", width=50, height=50, corner_radius=0, border_width=0, fg_color="transparent", hover_color=THEME["bg"], image=build_ui_icon("linkedin.png", 30), command=lambda: open_external_link(LINKEDIN_URL))
+linkedin_button.place(relx=1.0, rely=0.5, x=-58, anchor="e")
+instagram_button = ctk.CTkButton(signature_frame, text="", width=50, height=50, corner_radius=0, border_width=0, fg_color="transparent", hover_color=THEME["bg"], image=build_ui_icon("instagram.png", 30), command=lambda: open_external_link(INSTAGRAM_URL))
+instagram_button.place(relx=1.0, rely=0.5, x=-10, anchor="e")
+
+
+def reset_signature_position(_event=None):
+    canvas_width = signature_canvas.winfo_width()
+    signature_animation["x"] = canvas_width - 8
+    signature_canvas.coords(signature_text_item, signature_animation["x"], 14)
+
+
+def animate_signature():
+    if not signature_animation["running"]:
+        return
+    canvas_width = max(signature_canvas.winfo_width(), 1)
+    text_bbox = signature_canvas.bbox(signature_text_item)
+    text_width = (text_bbox[2] - text_bbox[0]) if text_bbox else 140
+    next_x = signature_animation["x"] - 2
+    if next_x < -text_width + 8:
+        next_x = canvas_width - 8
+    signature_animation["x"] = next_x
+    signature_canvas.coords(signature_text_item, next_x, 14)
+    app.after(28, animate_signature)
+
+
+def start_signature_animation():
+    if signature_animation["running"]:
+        return
+    signature_animation["running"] = True
+    reset_signature_position()
+    animate_signature()
+
+
+signature_canvas.bind("<Configure>", reset_signature_position)
 
 
 def update_language(language):
@@ -1618,18 +2150,13 @@ def update_language(language):
     nav_items["settings"]["button"].configure(text=ui_texts["nav_settings"])
     control_title.configure(text=ui_texts["nav_operations"])
     history_title.configure(text=ui_texts["nav_history"])
+    history_clear_button.configure(text="Temizle")
     history_refresh_button.configure(text=ui_texts["history_refresh"])
-    settings_title.configure(text=ui_texts["nav_settings"])
     info_title.configure(text=ui_texts["info_title"])
     actions_title.configure(text=ui_texts["actions_title"])
-    filter_title.configure(text=ui_texts["filter_title"])
-    search_label.configure(text=ui_texts["search_label"])
-    search_entry.configure(placeholder_text=ui_texts["search_placeholder"])
     selected_search_entry.configure(placeholder_text=ui_texts["selected_search_placeholder"])
     update_all_button.configure(text=ui_texts["update_all_button"])
-    filter_buttons["all"].configure(text=ui_texts["filter_all"])
-    filter_buttons["installed"].configure(text=ui_texts["filter_installed"])
-    filter_buttons["ready"].configure(text=ui_texts["filter_ready"])
+    update_helper_button_text()
 
 
 def change_language(language):
@@ -1643,16 +2170,23 @@ language_menu.set(settings.get("language", "Türkçe"))
 update_language(settings["language"])
 apply_language_theme_choices(settings["language"])
 apply_theme_colors()
+update_settings_content()
+set_activate_idm_button_state(installed=False)
 app_list.configure(command=select_app)
 scan_button.configure(command=threaded_get_installed_apps)
 update_button.configure(command=update_app)
+helper_button.configure(command=run_idm_helper)
+activate_idm_button.configure(command=run_idm_helper_from_settings)
 update_all_button.configure(command=update_all_apps)
+activate_windows_button.configure(command=run_windows_activation_helper)
+activate_office_button.configure(command=run_office_activation_helper)
+history_clear_button.configure(command=clear_history_items)
 history_refresh_button.configure(command=render_history_view)
-update_all_button.pack_forget()
-toolbar_row.pack_forget()
-update_filter_buttons()
 render_history_view()
 switch_view("operations")
+app.bind("<Configure>", handle_window_resize)
+app.after(0, apply_responsive_layout)
 refresh_selected_app_details()
 threaded_get_installed_apps()
+start_signature_animation()
 app.mainloop()
