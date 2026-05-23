@@ -25,7 +25,7 @@ Yüklü ve yüklü olmayan uygulamaları ikonlarla gösterir; seçtiğiniz uygul
 ## Kurulum
 
 ```bash
-git clone https://github.com/<kullanici-adin>/SCAN.git
+git clone https://github.com/serhatcan44/SCAN.git
 cd SCAN
 
 python -m venv .venv
